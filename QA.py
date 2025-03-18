@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import numpy as np
 from sklearn.ensemble import IsolationForest
+import shap
 
 questions = {
     1: {"question": "Kilit yönetici personele ödenen ücreti toplam olarak açıklamış mı?", "question_number": 1},
@@ -158,6 +159,7 @@ def ask_ML():
 
         question_vector = create_question_vector(questions[question_number]["question"], question_types)
 
+        print("Question Vector: ", question_vector)
         test_context_embedding = get_bert_embedding(test_context)
         # Combine embeddings
         test_combined_embedding = np.hstack((test_context_embedding, question_vector)).flatten()
@@ -185,7 +187,7 @@ def ask_ML():
     # for i in save_context_xgb:
     #     print("------------------------------------\nContext: ", i[0], "\nConfidence Score: ", i[1], "\n")
 
-def update_standard_questions_data(score, file_name):
+def update_standard_questions_data(score, file_name_path):
     # JSON dosyasının var olup olmadığını kontrol et
     if not os.path.exists(json_path):
         # Dosya yoksa başlangıç yapısı oluştur ve kaydet
@@ -196,6 +198,7 @@ def update_standard_questions_data(score, file_name):
     with open(json_path, 'r') as file:
         data = json.load(file)
     
+    file_name = file_name_path.split('/')[-1]  # '/' üzerinden ayırır
     print("file name: ", file_name)
     # .txt uzantısını çıkar
     company_code, report_year = file_name.split("_")[0], file_name.split("_")[2].split(".")[0]
@@ -275,200 +278,241 @@ def detect_anomaly():
     model = IsolationForest(contamination=0.1, random_state=42)
     predictions = model.fit_predict(features)
 
+    anomaly_list = []
     # 5. Sonuçları yazdır
     for idx, prediction in enumerate(predictions):
         company_code, report_year = company_info[idx]
         anomaly_status = "Anomaly" if prediction == -1 else "Normal"
         print(f"Company: {company_code}, Year: {report_year}, Status: {anomaly_status}")
+        if anomaly_status == "Anomaly":
+            anomaly_list.append((company_code, report_year))
+    
+    # SHAP değerlerini hesapla ve görselleştir
+    print("\nCalculating SHAP values...")
+    explainer = shap.Explainer(model, features)
+    shap_values = explainer(features)
+
+    # SHAP özet grafiği
+    shap.summary_plot(shap_values, features, plot_type="bar")
+    # listbox.pack()
+    show_popup(anomaly_list)
 
 def main():
-    global context_list, question_number
-    folder_path = "C:/Users/onur/Desktop/Bitirme/Grad_Project_FR_txt_final"
+    global context_list, question_number, file_name_global
 
-    # Klasördeki tüm .txt dosyalarını bul
-    txt_files = [f for f in os.listdir(folder_path) if f.endswith(".txt")]
-    max_file_count = 0
-    for file_name in txt_files:
-        if max_file_count >= 400:
-            break
-        #5 kere dönecek bir for loop
-        for i in range(1, 6): # burada 6. index dahil değil
-            if i == 1 or i == 2 or i == 3 or i == 4:
-                question_number = i
-            if i == 5:
-                question_number = 10
-            print("question_number: ", question_number)
-            context_list = context_generator.start(file_name, question_number)
+    context_list = context_generator.start(file_name_global, question_number)
 
-            print("len of context_list: ", len(context_list))
+    print("len of context_list: ", len(context_list))
 
-            if question_number == 1 or question_number == 2 or question_number == 3 or question_number == 4 or question_number == 10:
-                ask_ML()
-                if save_context_rf and save_context_xgb:
-                    update_standard_questions_data((save_context_rf[0][1] + save_context_xgb[0][1]) / 2, file_name)
-                    # return "Evet"
-                else:
-                    update_standard_questions_data(0, file_name)
-                    # return "Hayır"
+    if question_number == 1 or question_number == 2 or question_number == 3 or question_number == 4 or question_number == 10:
+        ask_ML()
+        if save_context_rf and save_context_xgb:
+            update_standard_questions_data((save_context_rf[0][1] + save_context_xgb[0][1]) / 2, file_name_global)
+            if save_context_rf[0][1] > 0.8 and save_context_xgb[0][1] > 0.8:
+                return "Evet"
             else:
-                askBertQA()
-                if save_context:
-                    return save_context[0][1]
-                else:
-                    return "Not mentioned"
+                return "Hayır"
+        else:
+            update_standard_questions_data(0, file_name_global)
+            return "Hayır"
+    else:
+        askBertQA()
+        if save_context:
+            return save_context[0][1]
+        else:
+            return "Not mentioned"
 
-# def select_file():
-#     global file_name
-#     file_path = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
-#     if file_path:
-#         file_label.config(text=f"Selected file: {file_path}")
-#         file_name = file_path
-#     else:
-#         file_label.config(text="No file selected")
+def show_popup(anomaly_list):
+    # Yeni bir pop-up penceresi oluştur
+    popup = tk.Toplevel(root)
+    popup.title("Anomaly List")
+    popup.geometry("400x300")
 
-# # Soru seçildiğinde her şeyi sıfırla
-# def update_question_number(*args):
-#     global context_index, question_number
-#     context_index = 0  # Context indexi sıfırla
+    # Listbox'ı pop-up penceresine ekle
+    listbox = tk.Listbox(popup, width=50, height=15)
+    listbox.pack(pady=20)
 
-#     # Tüm frame'leri gizle
-#     model_menu.pack_forget()
-#     rf_xgb_frame.pack_forget()
-#     rf_nav_frame.pack_forget()
-#     bert_frame.pack_forget()
-#     bert_nav_frame.pack_forget()
-#     context_label.pack_forget()
-#     get_answer_label.pack_forget()
-#     answer_label.config(text="")
+    # Anomaly listesini Listbox'a ekle
+    for company_code, report_year in anomaly_list:
+        listbox.insert(tk.END, f"Company: {company_code}, Year: {report_year}")
 
-#     selected_question = question_var.get()
+    # Çıkış butonu
+    close_button = tk.Button(popup, text="Close", command=popup.destroy)
+    close_button.pack(pady=10)
+
+def select_file():
+    global file_name_global
+
+    answer_label.config(text="")
+    # listbox.pack()
+    # listbox.delete(0, tk.END)  # Listbox'ı temizle
+
+    file_path = filedialog.askopenfilename(filetypes=[("Text files", "*.txt")])
     
-#     for q_id, q_data in questions.items():
-#         if q_data["question"] == selected_question:
-#             selected_question_number.set(q_data["question_number"])
-#             question_number = q_data['question_number']
-#             print(f"Selected Question Number: {q_data['question_number']}")
-#             question_id_label.config(text=f"Selected Question Number: {q_data['question_number']}")
+    if file_path:
+        file_label.config(text=f"Selected file: {file_path}")
+        file_name_global = file_path
+    else:
+        file_label.config(text="No file selected")
+
+# Soru seçildiğinde her şeyi sıfırla
+def update_question_number(*args):
+    global context_index, question_number
+    context_index = 0  # Context indexi sıfırla
+
+    # Tüm frame'leri gizle
+    model_menu.pack_forget()
+    rf_xgb_frame.pack_forget()
+    rf_nav_frame.pack_forget()
+    bert_frame.pack_forget()
+    bert_nav_frame.pack_forget()
+    context_label.pack_forget()
+    get_answer_label.pack_forget()
+    answer_label.config(text="")
+    # listbox.pack()
+    # listbox.delete(0, tk.END)  # List
+
+    selected_question = question_var.get()
+    
+    for q_id, q_data in questions.items():
+        if q_data["question"] == selected_question:
+            selected_question_number.set(q_data["question_number"])
+            question_number = q_data['question_number']
+            print(f"Selected Question Number: {q_data['question_number']}")
+            question_id_label.config(text=f"Selected Question Number: {q_data['question_number']}")
             
-#             # ML veya BERT seçimine göre butonları göster/gizle
-#             if q_data["question_number"] in [1, 2, 3, 4, 10]:
-#                 model_menu.pack()  # Model seçimi menüsünü göster
-#                 rf_xgb_frame.pack()  # Show Context butonunu göster
-#                 get_answer_label.pack()  # Get Answer butonunu göster
-#             else:
-#                 bert_frame.pack()  # BERT için Show Context butonunu göster
-#                 get_answer_label.pack()  # Get Answer butonunu göster
-#             break
+            # ML veya BERT seçimine göre butonları göster/gizle
+            if q_data["question_number"] in [1, 2, 3, 4, 10]:
+                model_menu.pack()  # Model seçimi menüsünü göster
+                rf_xgb_frame.pack()  # Show Context butonunu göster
+                get_answer_label.pack()  # Get Answer butonunu göster
+            else:
+                bert_frame.pack()  # BERT için Show Context butonunu göster
+                get_answer_label.pack()  # Get Answer butonunu göster
+            break
 
-# # Context gösterme
-# def show_context(context_list, model_name):
-#     global context_index
-#     if not context_list:
-#         context_label.config(text=f"No context found for the selected question.")
-#         return
-#     if 0 <= context_index < len(context_list):
-#         if model_name == "ml":
-#             context, score = context_list[context_index]
-#             context_label.config(text=f"Context: {context}\n (Score: {score:.5f})")
-#         else:
-#             context, answer, score = context_list[context_index]
-#             context_label.config(text=f"Context: {context}\nAnswer: {answer} (Confidence Score: {score:.5f})")
-#         context_label.pack()
+# Context gösterme
+def show_context(context_list, model_name):
+    global context_index
+    if not context_list:
+        context_label.config(text=f"No context found for the selected question.")
+        return
+    if 0 <= context_index < len(context_list):
+        if model_name == "ml":
+            context, score = context_list[context_index]
+            context_label.config(text=f"Context: {context}\n (Score: {score:.5f})")
+        else:
+            context, answer, score = context_list[context_index]
+            context_label.config(text=f"Context: {context}\nAnswer: {answer} (Confidence Score: {score:.8f})")
+        context_label.pack()
 
-# # BERT için Show Context butonuna tıklanınca Previous/Next butonlarını göster
-# def show_bert_context():
-#     show_context(save_context, "bert")
-#     bert_nav_frame.pack()  # Previous ve Next butonlarını göster
+# BERT için Show Context butonuna tıklanınca Previous/Next butonlarını göster
+def show_bert_context():
+    show_context(save_context, "bert")
+    bert_nav_frame.pack()  # Previous ve Next butonlarını göster
 
-# # ML için Show Context butonuna tıklanınca Previous/Next butonlarını göster
-# def show_ml_context():
-#     selected_model = model_var.get()
-#     if selected_model == "Random Forest":
-#         show_context(save_context_rf, "ml")
-#     elif selected_model == "XGBoost":
-#         show_context(save_context_xgb, "ml")
-#     else:
-#         messagebox.showwarning("Warning", "Please select a valid model.")
-#     rf_nav_frame.pack()  # ML için Previous ve Next butonlarını göster
+# ML için Show Context butonuna tıklanınca Previous/Next butonlarını göster
+def show_ml_context():
+    selected_model = model_var.get()
+    if selected_model == "Random Forest":
+        show_context(save_context_rf, "ml")
+    elif selected_model == "XGBoost":
+        show_context(save_context_xgb, "ml")
+    else:
+        messagebox.showwarning("Warning", "Please select a valid model.")
+    rf_nav_frame.pack()  # ML için Previous ve Next butonlarını göster
 
-# # İleri/geri butonları
-# def next_context(context_list, model):
-#     global context_index
-#     if context_index < len(context_list) - 1:
-#         context_index += 1
-#         show_context(context_list, model)
+# İleri/geri butonları
+def next_context(context_list, model):
+    global context_index
+    if context_index < len(context_list) - 1:
+        context_index += 1
+        show_context(context_list, model)
 
-# def prev_context(context_list, model):
-#     global context_index
-#     if context_index > 0:
-#         context_index -= 1
-#         show_context(context_list, model)
+def prev_context(context_list, model):
+    global context_index
+    if context_index > 0:
+        context_index -= 1
+        show_context(context_list, model)
 
-# def select_model(selected_model):
-#     global context_index
-#     context_index = 0  # zero
-#     context_label.config(text="")
+def select_model(selected_model):
+    global context_index
+    context_index = 0  # zero
+    context_label.config(text="")
 
-# def get_answer():
-#     answer = main()
-#     answer_label.config(text=answer)
+def get_answer():
+    answer = main()
+    answer_label.config(text=answer)
 
-# # Tkinter UI
-# root = tk.Tk()
-# root.title("Question Answering System")
+# Tkinter UI
+root = tk.Tk()
+root.title("Question Answering and Anomaly Detection From Footnotes")
 
-# # Seçilen soru ID'sini göstermek için değişken
-# selected_question_number = tk.IntVar(value=0)
+# Pencere boyutunu belirle
+root.geometry("800x475")  # Genişlik: 400, Yükseklik: 300
 
-# tk.Button(root, text="Select File", command=select_file).pack()
-# file_label = tk.Label(root, text="No file selected")
-# file_label.pack()
+# Yeniden boyutlandırmayı devre dışı bırak
+root.resizable(False, False)  # (genişlik, yükseklik)
 
-# # Soru seçimi için dropdown menü
-# question_var = tk.StringVar(value="Select Question")
-# question_menu = tk.OptionMenu(root, question_var, *[q["question"] for q in questions.values()], command=update_question_number)
-# question_menu.pack()
+# Arkaplan rengini siyah yap
+# root.config(bg="black")
+
+# Seçilen soru ID'sini göstermek için değişken
+selected_question_number = tk.IntVar(value=0)
+
+tk.Button(root, text="Select File", command=select_file).pack()
+file_label = tk.Label(root, text="No file selected")
+file_label.pack()
+
+# Soru seçimi için dropdown menü
+question_var = tk.StringVar(value="Select Question")
+question_menu = tk.OptionMenu(root, question_var, *[q["question"] for q in questions.values()], command=update_question_number)
+question_menu.pack()
 
 
-# # Seçilen soru numarasını gösteren label
-# question_id_label = tk.Label(root, text="Selected Question Number: 0")
-# question_id_label.pack_forget()
+# Seçilen soru numarasını gösteren label
+question_id_label = tk.Label(root, text="Selected Question Number: 0")
+question_id_label.pack_forget()
 
-# # Model seçimi için dropdown menü (başlangıçta gizli)
-# model_var = tk.StringVar(value="Select Model")
-# model_menu = tk.OptionMenu(root, model_var, "Random Forest", "XGBoost", command=select_model)
-# model_menu.pack_forget()
+# Model seçimi için dropdown menü (başlangıçta gizli)
+model_var = tk.StringVar(value="Select Model")
+model_menu = tk.OptionMenu(root, model_var, "Random Forest", "XGBoost", command=select_model)
+model_menu.pack_forget()
 
-# # RF/XGB için Show Context butonu
-# rf_xgb_frame = tk.Frame(root)
-# tk.Button(rf_xgb_frame, text="Show ML Context", command=show_ml_context).pack()
+# RF/XGB için Show Context butonu
+rf_xgb_frame = tk.Frame(root)
+tk.Button(rf_xgb_frame, text="Show ML Context", command=show_ml_context).pack()
 
-# # RF/XGB için Previous/Next butonları (başlangıçta gizli)
-# rf_nav_frame = tk.Frame(root)
-# tk.Button(rf_nav_frame, text="Previous ML Context", command=lambda: prev_context(save_context_rf if model_var.get() == "Random Forest" else save_context_xgb, "ml")).pack()
-# tk.Button(rf_nav_frame, text="Next ML Context", command=lambda: next_context(save_context_rf if model_var.get() == "Random Forest" else save_context_xgb, "ml")).pack()
+# RF/XGB için Previous/Next butonları (başlangıçta gizli)
+rf_nav_frame = tk.Frame(root)
+tk.Button(rf_nav_frame, text="Previous ML Context", command=lambda: prev_context(save_context_rf if model_var.get() == "Random Forest" else save_context_xgb, "ml")).pack()
+tk.Button(rf_nav_frame, text="Next ML Context", command=lambda: next_context(save_context_rf if model_var.get() == "Random Forest" else save_context_xgb, "ml")).pack()
+tk.Button(root, text="Detect Outliers", command=detect_anomaly).pack()  # butona aşağı doğru padding ekle
 
-# # BERT için Show Context butonu
-# bert_frame = tk.Frame(root)
-# tk.Button(bert_frame, text="Show BERT Context", command=show_bert_context).pack()
+# BERT için Show Context butonu
+bert_frame = tk.Frame(root)
+tk.Button(bert_frame, text="Show BERT Context", command=show_bert_context).pack()
 
-# # BERT için Previous/Next butonları (başlangıçta gizli)
-# bert_nav_frame = tk.Frame(root)
-# tk.Button(bert_nav_frame, text="Previous BERT Context", command=lambda: prev_context(save_context, "bert")).pack()
-# tk.Button(bert_nav_frame, text="Next BERT Context", command=lambda: next_context(save_context, "bert")).pack()
+# BERT için Previous/Next butonları (başlangıçta gizli)
+bert_nav_frame = tk.Frame(root)
+tk.Button(bert_nav_frame, text="Previous BERT Context", command=lambda: prev_context(save_context, "bert")).pack()
+tk.Button(bert_nav_frame, text="Next BERT Context", command=lambda: next_context(save_context, "bert")).pack()
 
-# # Context gösterimi (başlangıçta gizli)
-# context_label = tk.Label(root, text="Context will appear here")
+# Context gösterimi (başlangıçta gizli)
+context_label = tk.Label(root, text="Context will appear here")
 
-# # Create and place the answer text area
-# answer_label = tk.Label(root, text="Answer:", width=100, height=2, bg="white", anchor="w", justify="left")
-# answer_label.pack(pady=10)
+# Create and place the answer text area
+answer_label = tk.Label(root, text="Answer:", width=100, height=2, bg="white", anchor="w", justify="left")
+answer_label.pack(pady=10)
 
-# # Get Answer
-# tk.Button(root, text="Get Answer", command=get_answer).pack()
-# get_answer_label = tk.Label(root)
-# get_answer_label.pack_forget()
+# Get Answer
+tk.Button(root, text="Get Answer", command=get_answer).pack()
+get_answer_label = tk.Label(root)
+get_answer_label.pack_forget()
 
-# root.mainloop()
+# Listbox oluştur
+# listbox = tk.Listbox(root, width=50, height=15)
 
-main()
+root.mainloop()
+
+# main()
